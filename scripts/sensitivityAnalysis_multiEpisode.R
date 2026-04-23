@@ -7,6 +7,9 @@ library(corrplot)
 library(lubridate)
 library(vip)
 library(caret)
+library(knitr)
+library(kableExtra)
+library(pROC)
 
 # Convert everything to year, month, day and time
 
@@ -22,171 +25,255 @@ inner_merged_yr2021_to_2025$timeDifference = as.numeric(difftime(inner_merged_yr
 
 # 30 Days - Keep every row where the assessment occurred within 30 days before the start of the supervision period
 
-supervision30Days_multiEpisode = inner_merged_yr2021_to_2025[inner_merged_yr2021_to_2025$timeDifference >= 0 
+supervision30Days = inner_merged_yr2021_to_2025[inner_merged_yr2021_to_2025$timeDifference >= 0 
                                                              & inner_merged_yr2021_to_2025$timeDifference <= 30, ]
   
 # 90 Days - Keep every row where the assessment occurred within 90 days before the start of the supervision period
 
-supervision90Days_multiEpisode = inner_merged_yr2021_to_2025[inner_merged_yr2021_to_2025$timeDifference >= 0 
+supervision90Days = inner_merged_yr2021_to_2025[inner_merged_yr2021_to_2025$timeDifference >= 0 
                                                              & inner_merged_yr2021_to_2025$timeDifference <= 90, ]
+# Remove additional episodes after the first episode for each subject and duplicates with less severe
+# charges
 
-# Logistic Regression for 30 and 90 Days, multi-episode
+supervision30Days = supervision30Days[-c(44,75,247,257,311,380,529),]
+
+supervision90Days = supervision90Days[-c(9,44,55,75,82,245,247,257,311,351,380,529),]
+# Validating Logistic Regression for 30 and 90 Days, single episode
 set.seed(2017)
 
+supervision30days_split = initial_split(supervision30Days, prop = 0.8)
+# 90 Days
+supervision90days_split = initial_split(supervision90Days, prop = 0.8)
 
-# Setting up partitions to stratify against NCA and FTA
-fta_partition90 = supervision90Days_multiEpisode %>% 
-  initial_split(0.8, strata = Scale.Term1) # Predicting FTA 
+# Training the Model
 
-nca_partition90 = supervision90Days_multiEpisode %>% 
-  initial_split(0.8, strata = Scale.Term2) # Predicting NCA
+supervision30days_training = training(supervision30days_split)
+supervision90days_training = training(supervision90days_split)
 
-fta_partition30 = supervision30Days_multiEpisode %>% 
-  initial_split(0.8, strata = Scale.Term1) # Predicting FTA 
+# 30 Days - NCA and FTA - Predictors are FTA Score, NCA Score, NVCA Score, and Days on Supervision
+glm30fitNCA = glm(NCA_Charge ~ Scale.Term1 + Scale.Term2 + Scale.Term3
+               + B_EvtDaysOnSup, data = supervision30days_training, family = "binomial")
 
-nca_partition30 = supervision30Days_multiEpisode %>% 
-  initial_split(0.8, strata = Scale.Term2) # Predicting NCA
+glm30fitFTA = glm(FTA_Outcome ~ Scale.Term1 + Scale.Term2 + Scale.Term3
+                  + B_EvtDaysOnSup, data = supervision30days_training, family = "binomial")
 
-# Building training and testing for FTA and NCA
-fta_training90 = training(fta_partition90)
-fta_testing90 = testing(fta_partition90)
+# 90 Days - NCA and FTA - Predictors are FTA Score, NCA Score, NVCA Score, and Days on Supervision
+glm90fitNCA = glm(NCA_Charge ~ Scale.Term1 + Scale.Term2 + Scale.Term3
+                  + B_EvtDaysOnSup, data = supervision90days_training, family = "binomial")
 
-nca_training90 = training(nca_partition90)
-nca_testing90 = testing(nca_partition90)
+glm90fitFTA = glm(FTA_Outcome ~ Scale.Term1 + Scale.Term2 + Scale.Term3
+                  + B_EvtDaysOnSup, data = supervision90days_training, family = "binomial")
 
-fta_training30 = training(fta_partition30)
-fta_testing30 = testing(fta_partition30)
+# Extracting AUC values & confidence intervals for accounting only for days released
+glm30fitFTA_auc = as.numeric(auc(roc(supervision30days_training$FTA_Outcome, glm30fitFTA$fitted.values, plot = FALSE)))
+glm90fitFTA_auc = as.numeric(auc(roc(supervision90days_training$FTA_Outcome, glm90fitFTA$fitted.values, plot = FALSE))) 
+glm30fitNCA_auc = as.numeric(auc(roc(supervision30days_training$NCA_Charge, glm30fitNCA$fitted.values, plot = FALSE)))
+glm90fitNCA_auc = as.numeric(auc(roc(supervision90days_training$NCA_Charge, glm90fitNCA$fitted.values, plot = FALSE)))
 
-nca_training30 = training(nca_partition30)
-nca_testing30 = testing(nca_partition30)
+glm30fitFTA_ci = as.numeric(ci(roc(supervision30days_training$FTA_Outcome, glm30fitFTA$fitted.values, plot = FALSE)))[c(1,3)]
+glm90fitFTA_ci = as.numeric(ci(roc(supervision90days_training$FTA_Outcome, glm90fitFTA$fitted.values, plot = FALSE)))[c(1,3)]
+glm30fitNCA_ci = as.numeric(ci(roc(supervision30days_training$NCA_Charge, glm30fitNCA$fitted.values, plot = FALSE)))[c(1,3)]
+glm90fitNCA_ci = as.numeric(ci(roc(supervision90days_training$NCA_Charge, glm90fitNCA$fitted.values, plot = FALSE)))[c(1,3)]
 
-# Checking for variables that are too correlated
-fta_training30 %>%
-  select(where(is.numeric)) %>%
-  cor(use = "complete.obs") %>%
-  corrplot(type = 'lower', diag = FALSE, method = 'color')
+timePeriods = c("30 Days", "90 Days", "30 Days", "90 Days")
+riskPredictors = c("FTA", "FTA", "NCA","NCA")
 
-nca_training30 %>%
-  select(where(is.numeric)) %>%
-  cor(use = "complete.obs") %>%
-  corrplot(type = 'lower', diag = FALSE, method = 'color')
+auc_values_v1 = c(glm30fitFTA_auc, glm90fitFTA_auc, glm30fitNCA_auc, glm90fitNCA_auc)
 
-fta_training90 %>%
-  select(where(is.numeric)) %>%
-  cor(use = "complete.obs") %>%
-  corrplot(type = 'lower', diag = FALSE, method = 'color')
+conf_ints_v1 = c(paste0(glm30fitFTA_ci[1],",",glm30fitFTA_ci[2]), paste0(glm90fitFTA_ci[1],",",glm90fitFTA_ci[2]),
+                 paste0(glm30fitNCA_ci[1],",",glm30fitNCA_ci[2]), paste0(glm90fitNCA_ci[1],",",glm90fitNCA_ci[2]))
 
-nca_training90 %>%
-  select(where(is.numeric)) %>%
-  cor(use = "complete.obs") %>%
-  corrplot(type = 'lower', diag = FALSE, method = 'color')
+glmTable = data.frame(riskPredictors, timePeriods, auc_values_v1, conf_ints_v1)
 
-# Building the Recipes
+colnames(glmTable) = c("Outcome", "Time Period", "AUC", "95% Confidence Interval")
+
+glmTable %>% 
+  kbl() %>% 
+  kable_minimal(c("striped", "hover"))
+
+# 30 Days - NCA and FTA - Predictors are FTA Score, NCA Score, NVCA Score, Days on Supervision, 
+# and Race
 
 
-fta_recipe30 <- recipe(Scale.Term1 ~ A_CaseType + A_EVTRACK + A_EVLEVEL + B_EvtSupStDt
-                     + B_EvtSupEdDt + B_EvtDaysOnSup + C_NewChargeOnSupYN + D_Gender
-                     + D_AgeAtSup + E_DaysInJailDuringSup + L_FTAwarCount, data= fta_training30) %>%
-  step_dummy(all_nominal_predictors())
+# Example if we're doing more than the given variable mentioned
+#glm(NCA_Charge ~ Scale.Term1 + Scale.Term2 + Scale.Term3
+  #  + B_EvtDaysOnSup + D_Race, data = supervision30Days, family = "binomial")
 
-fta_recipe90 <- recipe(Scale.Term1 ~ A_CaseType + A_EVTRACK + A_EVLEVEL + B_EvtSupStDt
-                       + B_EvtSupEdDt + B_EvtDaysOnSup + C_NewChargeOnSupYN + D_Gender
-                       + D_AgeAtSup + E_DaysInJailDuringSup + L_FTAwarCount, data= fta_training90) %>%
-  step_dummy(all_nominal_predictors())
-#step_interact(terms = ~ starts_with("sex"):fare) %>%
-#step_interact(terms = ~ D_Gender:L_FTAwarRP + D_Gender:E_DaysInJailDuringSup)
+# Race + Risk Scores
 
-nca_recipe30 <- recipe(Scale.Term2 ~ A_CaseType + A_EVTRACK + A_EVLEVEL + B_EvtSupStDt
-                     + B_EvtSupEdDt + B_EvtDaysOnSup + C_NewChargeOnSupYN + D_Gender
-                     + D_AgeAtSup + E_DaysInJailDuringSup + L_FTAwarCount, data= nca_training30) %>%
-  step_dummy(all_nominal_predictors())
+glm30fitNCA_Race = glm(NCA_Charge ~ Scale.Term1 + Scale.Term2 
+                       + Scale.Term3 + D_Race, data = supervision30days_training, family = "binomial")
 
-nca_recipe90 <- recipe(Scale.Term2 ~ A_CaseType + A_EVTRACK + A_EVLEVEL + B_EvtSupStDt
-                       + B_EvtSupEdDt + B_EvtDaysOnSup + C_NewChargeOnSupYN + D_Gender
-                       + D_AgeAtSup + E_DaysInJailDuringSup + L_FTAwarCount, data= nca_training90) %>%
-  step_dummy(all_nominal_predictors())
+glm30fitFTA_Race = glm(FTA_Outcome ~ Scale.Term1 + Scale.Term2
+                       + Scale.Term3 + D_Race, data = supervision30days_training, family = "binomial")
 
-# Fitting the Models
-log_reg <- logistic_reg() %>% 
-  set_engine("glm") %>% 
-  set_mode("classification")
+# 90 Days - NCA and FTA - Predictors are FTA Score, NCA Score, NVCA Score, Days on Supervision, and Race
+glm90fitNCA_Race = glm(NCA_Charge ~ Scale.Term1 + Scale.Term2
+                       + Scale.Term3 + D_Race, data = supervision90days_training, family = "binomial")
 
-fta_logFlow30 <- workflow() %>%
-  add_model(log_reg) %>%
-  add_recipe(fta_recipe30)
+glm90fitFTA_Race = glm(FTA_Outcome ~ Scale.Term1 + Scale.Term2
+                       + Scale.Term3 + D_Race, data = supervision90days_training, family = "binomial")
 
-fta_logFlow90 <- workflow() %>%
-  add_model(log_reg) %>%
-  add_recipe(fta_recipe90)
+# Extracting AUC values & confidence intervals for accounting for days released and race
 
-nca_logFlow30 <- workflow() %>%
-  add_model(log_reg) %>%
-  add_recipe(nca_recipe30)
+supervision30days_training$fitted.fta = glm30fitFTA_Race$fitted.values
+supervision30days_training$fitted.nca = glm30fitNCA_Race$fitted.values
+supervision90days_training$fitted.fta = glm90fitFTA_Race$fitted.values
+supervision90days_training$fitted.nca = glm90fitNCA_Race$fitted.values
 
-nca_logFlow90 <- workflow() %>%
-  add_model(log_reg) %>%
-  add_recipe(nca_recipe90)
+# White FTA AUC Values
+glm30fitFTA_auc_white = as.numeric(auc(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Race == "White"],
+                                           supervision30days_training$fitted.fta[supervision30days_training$D_Race == "White"], plot = FALSE)))
+glm90fitFTA_auc_white = as.numeric(auc(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Race == "White"],
+                                           supervision90days_training$fitted.fta[supervision90days_training$D_Race == "White"], plot = FALSE)))
+# White NCA AUC Values
+glm30fitNCA_auc_white = as.numeric(auc(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Race == "White"],
+                                           supervision30days_training$fitted.nca[supervision30days_training$D_Race == "White"], plot = FALSE)))
 
-fta_logFit30 <- fit(fta_logFlow30, fta_training30)
+glm90fitNCA_auc_white = as.numeric(auc(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Race == "White"],
+                                           supervision90days_training$fitted.nca[supervision90days_training$D_Race == "White"], plot = FALSE)))
 
-fta_logFit90 <- fit(fta_logFlow90, fta_training90)
+# Hispanic FTA AUC Values
+glm30fitFTA_auc_hispanic = as.numeric(auc(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Race == "Hispanic"],
+                                           supervision30days_training$fitted.fta[supervision30days_training$D_Race == "Hispanic"], plot = FALSE)))
+glm90fitFTA_auc_hispanic = as.numeric(auc(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Race == "Hispanic"],
+                                           supervision90days_training$fitted.fta[supervision90days_training$D_Race == "Hispanic"], plot = FALSE)))
+# Hispanic NCA AUC Values
+glm30fitNCA_auc_hispanic = as.numeric(auc(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Race == "Hispanic"],
+                                           supervision30days_training$fitted.nca[supervision30days_training$D_Race == "Hispanic"], plot = FALSE)))
 
-nca_logFit30 <- fit(nca_logFlow30, nca_training30)
+glm90fitNCA_auc_hispanic = as.numeric(auc(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Race == "Hispanic"],
+                                           supervision90days_training$fitted.nca[supervision90days_training$D_Race == "Hispanic"], plot = FALSE)))
 
-nca_logFit90 <- fit(nca_logFlow90, nca_training90)
 
-# Predicting FTA and NCA outcomes on training data
+# Vectors of AUC values
+auc_values_white = c(glm30fitFTA_auc_white, glm90fitFTA_auc_white, glm30fitNCA_auc_white, glm90fitNCA_auc_white)
+auc_values_hispanic = c(glm30fitFTA_auc_hispanic, glm90fitFTA_auc_hispanic, glm30fitNCA_auc_hispanic, glm90fitNCA_auc_hispanic)
 
-nca_log_predictions30 <- predict(nca_logFit30, new_data = nca_training30, type = "prob")
-nca_log_predictions30 <- bind_cols(nca_log_predictions30, nca_training30)
-roc_auc(nca_log_predictions30, truth = Scale.Term2, .pred_NewCriminalArrest)
+# Confidence Intervals for AUC Values: White and Hispanic
 
-nca_log_predictions90 <- predict(nca_logFit90, new_data = nca_training90, type = "prob")
-nca_log_predictions90 <- bind_cols(nca_log_predictions90, nca_training90)
-roc_auc(nca_log_predictions90, truth = Scale.Term2, .pred_NewCriminalArrest)
+glm30fitFTA_ci_white = as.numeric(ci(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Race == "White"],
+                                         supervision30days_training$fitted.fta[supervision30days_training$D_Race == "White"], plot = FALSE)))[c(1,3)]
+glm90fitFTA_ci_white = as.numeric(ci(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Race == "White"],
+                                         supervision90days_training$fitted.fta[supervision90days_training$D_Race == "White"], plot = FALSE)))[c(1,3)]
+glm30fitNCA_ci_white = as.numeric(ci(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Race == "White"],
+                                         supervision30days_training$fitted.nca[supervision30days_training$D_Race == "White"], plot = FALSE)))[c(1,3)]
+glm90fitNCA_ci_white = as.numeric(ci(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Race == "White"],
+                                         supervision90days_training$fitted.nca[supervision90days_training$D_Race == "White"], plot = FALSE)))[c(1,3)]
+# Hispanic Confidence Intervals
 
-fta_log_predictions30 <- predict(fta_logFit30, new_data = fta_training30, type = "prob")
-fta_log_predictions30 <- bind_cols(fta_log_predictions30, fta_training30)
-roc_auc(fta_log_predictions30, truth = Scale.Term1, .pred_FailuretoAppear)
+glm30fitFTA_ci_hispanic = as.numeric(ci(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Race == "Hispanic"],
+                                         supervision30days_training$fitted.fta[supervision30days_training$D_Race == "Hispanic"], plot = FALSE)))[c(1,3)]
+glm90fitFTA_ci_hispanic = as.numeric(ci(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Race == "Hispanic"],
+                                         supervision90days_training$fitted.fta[supervision90days_training$D_Race == "Hispanic"], plot = FALSE)))[c(1,3)]
+glm30fitNCA_ci_hispanic = as.numeric(ci(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Race == "Hispanic"],
+                                         supervision30days_training$fitted.nca[supervision30days_training$D_Race == "Hispanic"], plot = FALSE)))[c(1,3)]
+glm90fitNCA_ci_hispanic = as.numeric(ci(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Race == "Hispanic"],
+                                         supervision90days_training$fitted.nca[supervision90days_training$D_Race == "Hispanic"], plot = FALSE)))[c(1,3)]
 
-fta_log_predictions90 <- predict(fta_logFit90, new_data = fta_training90, type = "prob")
-fta_log_predictions90 <- bind_cols(fta_log_predictions90, fta_training90)
-roc_auc(fta_log_predictions90, truth = Scale.Term1, .pred_FailuretoAppear)
+# Confidence Interval Vectors
+conf_ints_white = c(paste0(glm30fitFTA_ci_white[1],",",glm30fitFTA_ci_white[2]), paste0(glm90fitFTA_ci_white[1],",",glm90fitFTA_ci_white[2]),
+                 paste0(glm30fitNCA_ci_white[1],",",glm30fitNCA_ci_white[2]), paste0(glm90fitNCA_ci_white[1],",",glm90fitNCA_ci_white[2]))
 
-# Predicting FTA and NCA outcomes on testing data
+conf_ints_hispanic = c(paste0(glm30fitFTA_ci_hispanic[1],",",glm30fitFTA_ci_hispanic[2]), paste0(glm90fitFTA_ci_hispanic[1],",",glm90fitFTA_ci_hispanic[2]),
+                    paste0(glm30fitNCA_ci_hispanic[1],",",glm30fitNCA_ci_hispanic[2]), paste0(glm90fitNCA_ci_hispanic[1],",",glm90fitNCA_ci_hispanic[2]))
 
-fta_logistic_test_results30 <- augment(fta_logFit30, new_data = fta_testing30)
-roc_auc(fta_logistic_test_results30, truth = Scale.Term1, .pred_FailuretoAppear)
+glmTablev2 = data.frame(riskPredictors, timePeriods, auc_values_white, auc_values_hispanic, conf_ints_white, conf_ints_hispanic)
 
-fta_logistic_test_results90 <- augment(fta_logFit90, new_data = fta_testing90)
-roc_auc(fta_logistic_test_results90, truth = Scale.Term1, .pred_FailuretoAppear)
+colnames(glmTablev2) = c("Outcome", "Time Period", "AUC (White)", "AUC (Hispanic)",
+                         "95% Confidence Interval (White)", "95% Confidence Interval (Hispanic)")
 
-nca_logistic_test_results30 <- augment(nca_logFit30, new_data = nca_testing30)
-roc_auc(nca_logistic_test_results30, truth = Scale.Term2, .pred_NewCriminalArrest)
+glmTablev2 %>% 
+  kbl() %>% 
+  kable_minimal(c("striped", "hover"))
 
-nca_logistic_test_results90 <- augment(nca_logFit90, new_data = nca_testing90)
-roc_auc(nca_logistic_test_results90, truth = Scale.Term2, .pred_NewCriminalArrest)
+# AUC by Gender
 
-# Confidence Matrices
+glm30fitNCA_Gender = glm(NCA_Charge ~ Scale.Term1 + Scale.Term2
+                         + Scale.Term3 + D_Gender, data = supervision30days_training, family = "binomial")
 
-conf_mat(fta_logistic_test_results, truth = Scale.Term1, estimate = .pred_class)
-conf_mat(nca_logistic_test_results, truth = Scale.Term2, estimate = .pred_class)
+glm30fitFTA_Gender = glm(FTA_Outcome ~ Scale.Term1 + Scale.Term2
+                         + Scale.Term3 + D_Gender, data = supervision30days_training, family = "binomial")
 
-# ROC Curves
+# 90 Days - NCA and FTA - Predictors are FTA Score, NCA Score, NVCA Score, Days on Supervision, and Race
+glm90fitNCA_Gender = glm(NCA_Charge ~ Scale.Term1 + Scale.Term2
+                         + Scale.Term3 + D_Gender, data = supervision90days_training, family = "binomial")
 
-augment(fta_logFit30, new_data = fta_testing30) %>%
-  roc_curve(truth = Scale.Term1, .pred_FailuretoAppear) %>%
-  autoplot()
+glm90fitFTA_Gender = glm(FTA_Outcome ~ Scale.Term1 + Scale.Term2
+                         + Scale.Term3 + D_Gender, data = supervision90days_training, family = "binomial")
 
-augment(fta_logFit90, new_data = fta_testing90) %>%
-  roc_curve(truth = Scale.Term1, .pred_FailuretoAppear) %>%
-  autoplot()
+# Extracting AUC values & confidence intervals for accounting for days released and race
 
-augment(nca_logFit30, new_data = nca_testing30) %>%
-  roc_curve(truth = Scale.Term2, .pred_NewCriminalArrest) %>%
-  autoplot()
+supervision30days_training$fitted.fta.gender = glm30fitFTA_Gender$fitted.values
+supervision30days_training$fitted.nca.gender = glm30fitNCA_Gender$fitted.values
+supervision90days_training$fitted.fta.gender = glm90fitFTA_Gender$fitted.values
+supervision90days_training$fitted.nca.gender = glm90fitNCA_Gender$fitted.values
 
-augment(nca_logFit90, new_data = nca_testing90) %>%
-  roc_curve(truth = Scale.Term2, .pred_NewCriminalArrest) %>%
-  autoplot()
-  
+# Men FTA AUC Values
+glm30fitFTA_auc_men = as.numeric(auc(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Gender == "M"],
+                                           supervision30days_training$fitted.fta[supervision30days_training$D_Gender == "M"], plot = FALSE)))
+glm90fitFTA_auc_men = as.numeric(auc(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Gender == "M"],
+                                           supervision90days_training$fitted.fta[supervision90days_training$D_Gender == "M"], plot = FALSE)))
+# Men NCA AUC Values
+glm30fitNCA_auc_men = as.numeric(auc(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Gender == "M"],
+                                           supervision30days_training$fitted.nca[supervision30days_training$D_Gender == "M"], plot = FALSE)))
+
+glm90fitNCA_auc_men = as.numeric(auc(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Gender == "M"],
+                                           supervision90days_training$fitted.nca[supervision90days_training$D_Gender == "M"], plot = FALSE)))
+
+# Women FTA AUC Values
+glm30fitFTA_auc_women = as.numeric(auc(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Gender == "F"],
+                                              supervision30days_training$fitted.fta[supervision30days_training$D_Gender == "F"], plot = FALSE)))
+glm90fitFTA_auc_women = as.numeric(auc(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Gender == "F"],
+                                              supervision90days_training$fitted.fta[supervision90days_training$D_Gender == "F"], plot = FALSE)))
+# Women NCA AUC Values
+glm30fitNCA_auc_women = as.numeric(auc(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Gender == "F"],
+                                              supervision30days_training$fitted.nca[supervision30days_training$D_Gender == "F"], plot = FALSE)))
+
+glm90fitNCA_auc_women = as.numeric(auc(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Gender == "F"],
+                                              supervision90days_training$fitted.nca[supervision90days_training$D_Gender == "F"], plot = FALSE)))
+
+
+# Vectors of AUC values
+auc_values_men = c(glm30fitFTA_auc_men, glm90fitFTA_auc_men, glm30fitNCA_auc_men, glm90fitNCA_auc_men)
+auc_values_women = c(glm30fitFTA_auc_women, glm90fitFTA_auc_women, glm30fitNCA_auc_women, glm90fitNCA_auc_women)
+
+# Confidence Intervals for AUC Values: White and Hispanic
+
+glm30fitFTA_ci_men = as.numeric(ci(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Gender == "M"],
+                                         supervision30days_training$fitted.fta[supervision30days_training$D_Gender == "M"], plot = FALSE)))[c(1,3)]
+glm90fitFTA_ci_men = as.numeric(ci(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Gender == "M"],
+                                         supervision90days_training$fitted.fta[supervision90days_training$D_Gender == "M"], plot = FALSE)))[c(1,3)]
+glm30fitNCA_ci_men = as.numeric(ci(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Gender == "M"],
+                                         supervision30days_training$fitted.nca[supervision30days_training$D_Gender == "M"], plot = FALSE)))[c(1,3)]
+glm90fitNCA_ci_men = as.numeric(ci(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Gender == "M"],
+                                         supervision90days_training$fitted.nca[supervision90days_training$D_Gender == "M"], plot = FALSE)))[c(1,3)]
+# Hispanic Confidence Intervals
+
+glm30fitFTA_ci_women = as.numeric(ci(roc(supervision30days_training$FTA_Outcome[supervision30days_training$D_Gender == "F"],
+                                            supervision30days_training$fitted.fta[supervision30days_training$D_Gender == "F"], plot = FALSE)))[c(1,3)]
+glm90fitFTA_ci_women = as.numeric(ci(roc(supervision90days_training$FTA_Outcome[supervision90days_training$D_Gender == "F"],
+                                            supervision90days_training$fitted.fta[supervision90days_training$D_Gender == "F"], plot = FALSE)))[c(1,3)]
+glm30fitNCA_ci_women = as.numeric(ci(roc(supervision30days_training$NCA_Charge[supervision30days_training$D_Gender == "F"],
+                                            supervision30days_training$fitted.nca[supervision30days_training$D_Gender == "F"], plot = FALSE)))[c(1,3)]
+glm90fitNCA_ci_women = as.numeric(ci(roc(supervision90days_training$NCA_Charge[supervision90days_training$D_Gender == "F"],
+                                            supervision90days_training$fitted.nca[supervision90days_training$D_Gender == "F"], plot = FALSE)))[c(1,3)]
+
+# Confidence Interval Vectors
+conf_ints_men = c(paste0(glm30fitFTA_ci_men[1],",",glm30fitFTA_ci_men[2]), paste0(glm90fitFTA_ci_men[1],",",glm90fitFTA_ci_men[2]),
+                    paste0(glm30fitNCA_ci_men[1],",",glm30fitNCA_ci_men[2]), paste0(glm90fitNCA_ci_men[1],",",glm90fitNCA_ci_men[2]))
+
+conf_ints_women = c(paste0(glm30fitFTA_ci_women[1],",",glm30fitFTA_ci_women[2]), paste0(glm90fitFTA_ci_women[1],",",glm90fitFTA_ci_women[2]),
+                       paste0(glm30fitNCA_ci_women[1],",",glm30fitNCA_ci_women[2]), paste0(glm90fitNCA_ci_women[1],",",glm90fitNCA_ci_women[2]))
+
+glmTablev3 = data.frame(riskPredictors, timePeriods, auc_values_men, auc_values_women, conf_ints_men, conf_ints_women)
+
+colnames(glmTablev3) = c("Outcome", "Time Period", "AUC (Men)", "AUC (Women)",
+                         "95% Confidence Interval (Men)", "95% Confidence Interval (Women)")
+
+glmTablev3 %>% 
+  kbl() %>% 
+  kable_minimal(c("striped", "hover"))
+
+
+
