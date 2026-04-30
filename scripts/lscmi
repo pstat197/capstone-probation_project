@@ -1,0 +1,202 @@
+library(tidyverse)
+library(lubridate)
+library(pROC)
+library(stringr)
+
+lscmi_clean <- lscmi %>%
+  select(MNID, DATECREATED, RESULT, SCORE, RISKLEVEL) %>%
+  mutate(
+    DATECREATED = mdy_hms(DATECREATED),
+    SCORE = as.numeric(SCORE),
+    RISKLEVEL = str_trim(RISKLEVEL)
+  )
+
+summary(lscmi_clean$DATECREATED)
+sum(is.na(lscmi_clean$DATECREATED))
+
+recid_clean <- slo_recidivism_for_SupEvents_after_7_1_2021_sent %>%
+  mutate(
+    SupEvent_Start = mdy(SupEvent_Start),
+    SupEvent_End = mdy(SupEvent_End),
+    vioDate_During_Sup = mdy(vioDate_During_Sup),
+    vioDate_after_Sup = mdy(vioDate_after_Sup)
+  )
+
+lscmi_merge <- recid_clean %>%
+  inner_join(lscmi_clean, by = "MNID", relationship = "many-to-many") %>%
+  filter(
+    DATECREATED >= SupEvent_Start,
+    is.na(SupEvent_End) | DATECREATED <= SupEvent_End
+  )
+
+dim(lscmi_merge)
+
+lscmi_merge %>%
+  select(MNID, DATECREATED, SupEvent_Start, SupEvent_End,
+         vioDate_During_Sup, vioDate_after_Sup, SCORE, RISKLEVEL) %>%
+  head(20)
+
+#creating rearrest/reconviction outcomes
+
+conviction_dispos <- c(
+  "ADMITB", "ADMT", "CM", "FT", "GC", "GJ", "GPA", "GPB",
+  "GPCT", "GPJT", "GTBD", "TC", "TINFT", "INGJ", "TINGP", "TJ"
+)
+
+lscmi_merge <- lscmi_merge %>%
+  mutate(
+    vio_Dispo_During_Sup = str_trim(str_to_upper(vio_Dispo_During_Sup)),
+    vio_dispo_after_sup  = str_trim(str_to_upper(vio_dispo_after_sup)),
+    
+    diff_during = as.numeric(difftime(vioDate_During_Sup, DATECREATED, units = "days")),
+    diff_after  = as.numeric(difftime(vioDate_after_Sup, DATECREATED, units = "days")),
+    
+    rearrest = case_when(
+      !is.na(diff_during) & diff_during >= 0 & diff_during <= 365 ~ 1,
+      !is.na(diff_after)  & diff_after  >= 0 & diff_after  <= 365 ~ 1,
+      TRUE ~ 0
+    ),
+    
+    reconviction = case_when(
+      !is.na(diff_during) & diff_during >= 0 & diff_during <= 365 &
+        vio_Dispo_During_Sup %in% conviction_dispos ~ 1,
+      !is.na(diff_after) & diff_after >= 0 & diff_after <= 365 &
+        vio_dispo_after_sup %in% conviction_dispos ~ 1,
+      TRUE ~ 0
+    )
+  )
+
+#deduplicating to one row per assessment
+
+lscmi_analysis <- lscmi_merge %>%
+  arrange(MNID, DATECREATED, desc(rearrest), desc(reconviction)) %>%
+  group_by(MNID, DATECREATED) %>%
+  summarise(
+    SCORE = first(SCORE),
+    RISKLEVEL = first(RISKLEVEL),
+    GENDER = first(GENDER),
+    RACE = first(RACE),
+    rearrest = max(rearrest, na.rm = TRUE),
+    reconviction = max(reconviction, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#sanity check
+dim(lscmi_analysis)
+
+table(lscmi_analysis$rearrest, useNA = "ifany")
+table(lscmi_analysis$reconviction, useNA = "ifany")
+
+#roc auc time
+roc_rearrest <- roc(
+  response = lscmi_analysis$rearrest,
+  predictor = lscmi_analysis$SCORE,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+roc_reconviction <- roc(
+  response = lscmi_analysis$reconviction,
+  predictor = lscmi_analysis$SCORE,
+  levels = c(0, 1),
+  direction = "<"
+)
+
+auc_overall <- tibble(
+  Tool = "LS/CMI",
+  Outcome = c("Rearrest", "Reconviction"),
+  AUC = c(
+    as.numeric(auc(roc_rearrest)),
+    as.numeric(auc(roc_reconviction))
+  ),
+  CI_Lower = c(
+    as.numeric(ci.auc(roc_rearrest))[1],
+    as.numeric(ci.auc(roc_reconviction))[1]
+  ),
+  CI_Upper = c(
+    as.numeric(ci.auc(roc_rearrest))[3],
+    as.numeric(ci.auc(roc_reconviction))[3]
+  ),
+  N = nrow(lscmi_analysis)
+)
+
+
+
+auc_overall
+
+#outcome rates by score/risk level
+# By SCORE
+outcome_by_score <- lscmi_analysis %>%
+  group_by(SCORE) %>%
+  summarise(
+    N = n(),
+    rearrest_rate = mean(rearrest),
+    reconviction_rate = mean(reconviction),
+    .groups = "drop"
+  )
+
+# By RISK LEVEL
+outcome_by_risk <- lscmi_analysis %>%
+  group_by(RISKLEVEL) %>%
+  summarise(
+    N = n(),
+    rearrest_rate = mean(rearrest),
+    reconviction_rate = mean(reconviction),
+    .groups = "drop"
+  )
+
+outcome_by_score
+outcome_by_risk
+
+
+#fitting lr models
+# Rearrest model
+logit_rearrest <- glm(
+  rearrest ~ SCORE,
+  data = lscmi_analysis,
+  family = "binomial"
+)
+
+# Reconviction model
+logit_reconviction <- glm(
+  reconviction ~ SCORE,
+  data = lscmi_analysis,
+  family = "binomial"
+)
+
+# Tidy outputs (clean tables)
+logit_rearrest_table <- tidy(logit_rearrest, conf.int = TRUE)
+logit_reconviction_table <- tidy(logit_reconviction, conf.int = TRUE)
+
+logit_rearrest_table
+logit_reconviction_table
+
+#auc analysis
+# Gender AUCs (Rearrest)
+auc_by_gender_rearrest <- lscmi_analysis %>%
+  group_by(GENDER) %>%
+  filter(n() >= 50, n_distinct(rearrest) == 2) %>%
+  summarise(
+    N = n(),
+    AUC = as.numeric(auc(roc(rearrest, SCORE, levels = c(0,1)))),
+    CI_Lower = as.numeric(ci.auc(roc(rearrest, SCORE, levels = c(0,1)))[1]),
+    CI_Upper = as.numeric(ci.auc(roc(rearrest, SCORE, levels = c(0,1)))[3]),
+    .groups = "drop"
+  )
+
+# Race AUCs (Rearrest) — restrict to major groups
+auc_by_race_rearrest <- lscmi_analysis %>%
+  filter(RACE %in% c("W: White", "H:  Hispanic")) %>%
+  group_by(RACE) %>%
+  filter(n() >= 50, n_distinct(rearrest) == 2) %>%
+  summarise(
+    N = n(),
+    AUC = as.numeric(auc(roc(rearrest, SCORE, levels = c(0,1)))),
+    CI_Lower = as.numeric(ci.auc(roc(rearrest, SCORE, levels = c(0,1)))[1]),
+    CI_Upper = as.numeric(ci.auc(roc(rearrest, SCORE, levels = c(0,1)))[3]),
+    .groups = "drop"
+  )
+
+auc_by_gender_rearrest
+auc_by_race_rearrest
+
