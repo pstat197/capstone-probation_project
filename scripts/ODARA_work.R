@@ -27,16 +27,18 @@ odara_longMerge <- odara_longMerge %>%
 # codes, then it will be classified as a YES for reoffending domestic violence, 
 # otherwise treat it as a NO
 
-dV_general_violence_charges = c("PC69", "PC1361C1", "PC148B", "PC187A", "PC664-PC187A", "PC192B",
-                     "PC206", "PC207A", "PC664-PC211", "PC211", "PC21710", "PC21810", 
-                     "PC240", "PC242", "PC243C2", "PC243D", "PC243D-F", "PC2434A",
-                     "PC243B", "PC243E1", "PC2434E1", "PC245A4-F", "PC245A1-F", 
-                     "PC245A1", "PC245A4", "PC261A2", "PC2615D", "PC2615C", "PC273AA",
-                    "PC273AA-F", "PC273AB", "PC2736D", "PC368B1-F", "PC368B1", "PC368C",
-                    "PC417A1-M", "PC417A1", "PC4226a", "PC451C", "PC451D", "PC455",
-                    "PC6469B", "PC6469A", "PC18740", "PC166C1", "PC166C4", "PC166C1A", 
-                    "PC166C4-F","PC243E1", "PC2735F1", "PC2735", "PC2735A", "PC2735A-F", 
-                    "PC2735F1-F", "PC2735F2-F", "PC2735F2")
+
+# Violent Charges (HOLD off for Now): "PC69", "PC1361C1", "PC148B", "PC187A", "PC664-PC187A", "PC192B",
+#"PC206", "PC207A", "PC664-PC211", "PC211", "PC21710", "PC21810", 
+#"PC240", "PC242", "PC2434A","PC2434E1", "PC245A4-F", "PC245A1-F", 
+#"PC245A1", "PC245A4", "PC261A2", "PC2615D", "PC2615C", "PC273AA",
+#"PC273AA-F", "PC273AB","PC2736D", "PC368B1-F", "PC368B1", "PC368C",
+#"PC417A1-M", "PC417A1", "PC4226a", "PC451C", "PC451D", "PC455",
+#"PC6469B", "PC6469A", "PC18740", 
+dV_general_violence_charges = c("PC243C2", "PC243D", "PC243D-F", "PC2434A",
+                     "PC243B", "PC243E1",  "PC166C1", "PC166C4", "PC166C1A", 
+                    "PC166C4-F","PC2735F1", "PC2735", "PC2735A", "PC2735A-F", 
+                    "PC2735F1-F", "PC2735F2-F", "PC2735F2", "PC2736A", "PC273B")
 
 # Converting DATECREATED, vioDate_duringSup, and vioDate_afterSup to date format
 odara_longMerge$DATECREATED <- mdy_hms(odara_longMerge$DATECREATED)
@@ -81,6 +83,7 @@ odara_longMerge = odara_longMerge %>%
 
 odara_longMerge$GENDER = factor(odara_longMerge$GENDER)
 odara_longMerge$RACE = factor(odara_longMerge$RACE)
+odara_longMerge$dV_Outcome = factor(odara_longMerge$dV_Outcome)
 ## ODARA Assessment Score
 #odara_longMerge$RESULT = factor(odara_longMerge$RESULT)
 
@@ -104,7 +107,7 @@ odara_longMerge = odara_longMerge %>%
 
 # Setting up training and testing
 
-set.seed(5939)
+set.seed(337)
 
 odara_split = initial_split(odara_longMerge, prop = 0.8)
 odara_training = training(odara_split)
@@ -167,3 +170,37 @@ ci_odara_gender = ci_odara_gender %>%
     values_from = ci_seq
   )
 
+# ODARA
+
+## Race
+
+plot(roc(odara_testing$dV_Outcome, 
+         odara_testing$race.predictions), 
+     col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### White AUC
+plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"], 
+         odara_testing$race.predictions[odara_testing$RACE == "W: White"]), 
+     col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### Hispanic AUC
+plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"], 
+         odara_testing$race.predictions[odara_testing$RACE == "H:  Hispanic"]), 
+     col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+## Gender
+
+
+plot(roc(odara_testing$dV_Outcome, 
+         odara_testing$gender.predictions), 
+     col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### Men AUC
+plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "M"], 
+         odara_testing$gender.predictions[odara_testing$GENDER == "M"]), 
+     col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### Women AUC
+plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "F"], 
+         odara_testing$gender.predictions[odara_testing$GENDER == "F"]), 
+     col = "blue", main = "ROC Curve", print.auc = TRUE)
