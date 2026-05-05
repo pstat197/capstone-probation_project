@@ -51,12 +51,12 @@ odara_longMerge$vioDate_after_Sup <- mdy(odara_longMerge$vioDate_after_Sup)
 # If they have an end date with NA, then the supervision period is not over so they
 # should be excluded
 
-odara_endDate = as.Date("2026-04-26")
+odara_endDate = as.Date("2025-12-31")
 
 odara_longMerge$assessment_end_diff = as.numeric(time_length(difftime(odara_endDate,
                                                                       odara_longMerge$DATECREATED),"years"))
 odara_longMerge = odara_longMerge %>% 
-  filter(assessment_end_diff >= 3, 
+  filter(assessment_end_diff >= 1, 
          vio_Charge_During_Sup %in% dV_general_violence_charges | vio_Charge_after_Sup %in% dV_general_violence_charges)
 
 # Domestic Violence aka ODARA Truth is a 1 if the charge matches with the above vector
@@ -99,6 +99,9 @@ odara_longMerge = odara_longMerge %>%
   arrange(desc(dV_Outcome)) %>% 
   distinct(MNID, .keep_all = TRUE)
 
+set.seed(469464)
+#odara_longMerge = odara_longMerge[sample(1:nrow(odara_longMerge)),]
+
 # Drop instances of racial groups that are too underrepresented to predict domestic
 # violence outcomes on
 
@@ -106,8 +109,6 @@ odara_longMerge = odara_longMerge %>%
   filter(RACE %in% c("W: White", "H:  Hispanic"))
 
 # Setting up training and testing
-
-set.seed(337)
 
 odara_split = initial_split(odara_longMerge, prop = 0.8)
 odara_training = training(odara_split)
@@ -176,7 +177,9 @@ ci_odara_gender = ci_odara_gender %>%
 
 plot(roc(odara_testing$dV_Outcome, 
          odara_testing$race.predictions), 
-     col = "blue", main = "ROC Curve", print.auc = TRUE)
+     col = "blue", 
+     main = "Accuracy Curve of Race on recidivism of Domestic Violence",
+     print.auc = TRUE)
 
 ### White AUC
 plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"], 
