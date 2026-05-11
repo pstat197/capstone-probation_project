@@ -96,10 +96,15 @@ odara_longMerge$dV_Outcome = factor(odara_longMerge$dV_Outcome)
 # as they are all dV charges)
 
 odara_longMerge = odara_longMerge %>% 
-  arrange(desc(dV_Outcome)) %>% 
-  distinct(MNID, .keep_all = TRUE)
+  group_by(MNID, DATECREATED) %>% 
+  distinct(DATECREATED, .keep_all = TRUE)
+  #arrange(desc(dV_Outcome)) %>% 
+  #distinct(MNID, .keep_all = TRUE)
 
-set.seed(469464)
+# set seed 469464
+# 2nd set seed 2478
+# 3rd set seed 2
+set.seed(2)
 #odara_longMerge = odara_longMerge[sample(1:nrow(odara_longMerge)),]
 
 # Drop instances of racial groups that are too underrepresented to predict domestic
@@ -110,100 +115,246 @@ odara_longMerge = odara_longMerge %>%
 
 # Setting up training and testing
 
-odara_split = initial_split(odara_longMerge, prop = 0.8)
-odara_training = training(odara_split)
-odara_testing = testing(odara_split)
+## ODARA No GLM results:
+
+# Race
+odara_white_noGLM = roc(response = odara_longMerge$dV_Outcome[odara_longMerge$RACE == "W: White"], 
+                  predictor = odara_longMerge$RESULT[odara_longMerge$RACE == "W: White"], direction = "<")
+
+odara_hispanic_noGLM = roc(response = odara_longMerge$dV_Outcome[odara_longMerge$RACE == "H:  Hispanic"], 
+                     predictor = odara_longMerge$RESULT[odara_longMerge$RACE == "H:  Hispanic"], direction = "<")
+
+# Gender
+odara_men_noGLM = roc(response = odara_longMerge$dV_Outcome[odara_longMerge$GENDER == "M"], 
+                predictor = odara_longMerge$RESULT[odara_longMerge$GENDER == "M"], direction = "<")
+
+odara_women_noGLM = roc(response = odara_longMerge$dV_Outcome[odara_longMerge$GENDER == "F"], 
+                  predictor = odara_longMerge$RESULT[odara_longMerge$GENDER == "F"], direction = "<")
+
+# ODARA Demographics Curves
+
+plot(odara_men_noGLM, 
+     col = "blue", main = "ODARA ROC Curves for Demographics", print.auc = TRUE,
+     print.auc.x = 1.9,
+     print.auc.y = 0.9)
+
+plot(odara_women_noGLM, 
+     col = "red", print.auc = TRUE, add = TRUE,
+     print.auc.x = 1.9,
+     print.auc.y = 0.7)
+
+plot(odara_white_noGLM, 
+     col = "green", print.auc = TRUE, add = TRUE,
+     print.auc.x = 1.9,
+     print.auc.y = 0.5)
+
+plot(odara_hispanic_noGLM, 
+     col = "orange", lty = 2, print.auc = TRUE, add = TRUE,
+     print.auc.x = 1.9,
+     print.auc.y = 0.3)
+legend("bottomleft", legend=c("Men", "Women", "White", "Hispanic"), 
+       col=c("blue", "red", "green", "orange"),
+       pch=c(19, 18))
+
+## Logistic Regression
+#odara_split = initial_split(odara_longMerge, prop = 0.8)
+#odara_training = training(odara_split)
+#odara_testing = testing(odara_split)
 
 # Fitting models
-odara_gender = glm(dV_Outcome ~ RESULT + GENDER, data = odara_training, family = "binomial")
-odara_race = glm(dV_Outcome ~ RESULT + RACE, data = odara_training, family = "binomial")
+#odara_model = glm(dV_Outcome ~ RESULT, data = odara_training, family = "binomial")
+
 
 
 # Predicting on Test Set
-odara_testing$race.predictions <- predict(odara_race, newdata = odara_testing, type = "response")
-odara_testing$gender.predictions <- predict(odara_gender, newdata = odara_testing, type = "response")
+#odara_testing$predictions <- predict(odara_model, newdata = odara_testing, type = "response")
 
-# AUC Values
 
-auc_odara_race <- odara_testing %>%
-  group_by(RACE) %>%
-  summarize(auc_value = as.numeric(auc(response = dV_Outcome, predictor = race.predictions)))
+## AUC Values
 
-auc_odara_gender <- odara_testing %>%
-  group_by(GENDER) %>%
-  summarize(auc_value = as.numeric(auc(response = dV_Outcome, predictor = gender.predictions)))
+# Race
+
+#odara_white = roc(response = odara_testing$dV_Outcome[odara_testing$RACE == "W: White"], 
+        # predictor = odara_testing$predictions[odara_testing$RACE == "W: White"], direction = "<")
+
+#odara_hispanic = roc(response = odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"], 
+               #   predictor = odara_testing$predictions[odara_testing$RACE == "H:  Hispanic"], direction = "<")
+
+# Gender
+
+#odara_men = roc(response = odara_testing$dV_Outcome[odara_testing$GENDER == "M"], 
+                #  predictor = odara_testing$predictions[odara_testing$GENDER == "M"], direction = "<")
+
+#odara_women = roc(response = odara_testing$dV_Outcome[odara_testing$GENDER == "F"], 
+                 # predictor = odara_testing$predictions[odara_testing$GENDER == "F"], direction = "<")
+
+
+#odara_table <- tibble(Outcome = "ODARA",
+                       # Demographic = c("Men", "Women", "White", "Hispanic"),
+                       # AUC = c(as.numeric(auc(odara_men)),
+                                   #   as.numeric(auc(odara_women)),
+                                    #  as.numeric(auc(odara_white)),
+                                    #  as.numeric(auc(odara_hispanic))),
+                       # CI_Lower = c(as.numeric(ci.auc(odara_men)[1]),
+                                    # as.numeric(ci.auc(odara_women)[1]),
+                                    # as.numeric(ci.auc(odara_white)[1]),
+                                    # as.numeric(ci.auc(odara_hispanic)[1])
+ 
+                      #  ),
+                      #  CI_Upper = c(as.numeric(ci.auc(odara_men)[3]),
+                                  # as.numeric(ci.auc(odara_women)[3]),
+                                  # as.numeric(ci.auc(odara_white)[3]),
+                                  # as.numeric(ci.auc(odara_hispanic)[3])
+                                   
+                   #   ))
+
+
+
+#odara_cleanTable = odara_table %>% 
+  #kbl() %>% 
+  #kable_minimal(c("striped", "hover"))
+
+#odara_cleanTable
+
+# Overall ODARA Curve
+
+#plot(roc(odara_testing$dV_Outcome, 
+      #   odara_testing$predictions), 
+         # col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+# ODARA Demographics Curves
+
+#plot(odara_men, 
+     #col = "blue", main = "ODARA ROC Curves for Demographics", print.auc = TRUE,
+     #print.auc.x = 1.9,
+     #print.auc.y = 0.9)
+
+#plot(odara_women, 
+    # col = "red", print.auc = TRUE, add = TRUE,
+     #print.auc.x = 1.9,
+    # print.auc.y = 0.7)
+
+#plot(odara_white, 
+     #col = "green", print.auc = TRUE, add = TRUE,
+    # print.auc.x = 1.9,
+     #print.auc.y = 0.5)
+
+#plot(odara_hispanic, 
+    # col = "orange", lty = 2, print.auc = TRUE, add = TRUE,
+     #print.auc.x = 1.9,
+     #print.auc.y = 0.3)
+### White AUC
+#plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"], 
+         #odara_testing$race.predictions[odara_testing$RACE == "W: White"]), 
+    # col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### Hispanic AUC
+#plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"], 
+        # odara_testing$race.predictions[odara_testing$RACE == "H:  Hispanic"]), 
+     #col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+## Gender
+
+
+#plot(roc(odara_testing$dV_Outcome, 
+        # odara_testing$gender.predictions), 
+    # col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### Men AUC
+#plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "M"], 
+        # odara_testing$gender.predictions[odara_testing$GENDER == "M"]), 
+     #col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+### Women AUC
+#plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "F"], 
+         #odara_testing$gender.predictions[odara_testing$GENDER == "F"]), 
+     #col = "blue", main = "ROC Curve", print.auc = TRUE)
+
+
+
+#auc_odara_race <- odara_testing %>%
+ # group_by(RACE) %>%
+  #summarize(auc_value = as.numeric(auc(response = dV_Outcome, predictor = race.predictions)))
+
+#auc_odara_race <- odara_testing %>%
+  #group_by(RACE) %>%
+  #summarize(auc_value = as.numeric(auc(response = dV_Outcome, predictor = race.predictions)))
+
+#auc_odara_gender <- odara_testing %>%
+  #group_by(GENDER) %>%
+  #summarize(auc_value = as.numeric(auc(response = dV_Outcome, predictor = gender.predictions)))
 
 
 # DeLong Tests
 
 ## Race
 
-roc.test(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"],
-             odara_testing$race.predictions[odara_testing$RACE == "W: White"]), 
-         roc(odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"],
-             odara_testing$race.predictions[odara_testing$RACE == "H:  Hispanic"]))
+#roc.test(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"],
+             #odara_testing$race.predictions[odara_testing$RACE == "W: White"]), 
+        # roc(odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"],
+            # odara_testing$race.predictions[odara_testing$RACE == "H:  Hispanic"]))
 
-roc.test(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "M"],
-             odara_testing$gender.predictions[odara_testing$GENDER == "M"]), 
-         roc(odara_testing$dV_Outcome[odara_testing$GENDER == "F"],
-             odara_testing$gender.predictions[odara_testing$GENDER == "F"]))
+#roc.test(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "M"],
+            # odara_testing$gender.predictions[odara_testing$GENDER == "M"]), 
+         #roc(odara_testing$dV_Outcome[odara_testing$GENDER == "F"],
+            # odara_testing$gender.predictions[odara_testing$GENDER == "F"]))
 # Confidence Intervals
 
 ## Race
-ci_odara_race <- odara_testing %>%
-  group_by(RACE) %>%
-  reframe(ci_seq = as.numeric(ci(response = dV_Outcome, predictor = race.predictions))[c(1,3)])
+#ci_odara_race <- odara_testing %>%
+  #group_by(RACE) %>%
+  #reframe(ci_seq = as.numeric(ci(response = dV_Outcome, predictor = race.predictions))[c(1,3)])
 
-ci_odara_gender <- odara_testing %>%
-  group_by(GENDER) %>%
-  reframe(ci_seq = as.numeric(ci(response = dV_Outcome, predictor = gender.predictions))[c(1,3)])
+#ci_odara_gender <- odara_testing %>%
+  #group_by(GENDER) %>%
+  #reframe(ci_seq = as.numeric(ci(response = dV_Outcome, predictor = gender.predictions))[c(1,3)])
 
 # Formatting
-ci_odara_race = ci_odara_race %>% 
-  pivot_wider(
-    names_from = RACE,
-    values_from = ci_seq
-  )
+#ci_odara_race = ci_odara_race %>% 
+  #pivot_wider(
+    #names_from = RACE,
+    #values_from = ci_seq
+  #)
 
-ci_odara_gender = ci_odara_gender %>% 
-  pivot_wider(
-    names_from = GENDER,
-    values_from = ci_seq
-  )
+#ci_odara_gender = ci_odara_gender %>% 
+ # pivot_wider(
+   # names_from = GENDER,
+    #values_from = ci_seq
+  #)
 
 # ODARA
 
 ## Race
 
-plot(roc(odara_testing$dV_Outcome, 
-         odara_testing$race.predictions), 
-     col = "blue", 
-     main = "Accuracy Curve of Race on recidivism of Domestic Violence",
-     print.auc = TRUE)
+#plot(roc(odara_testing$dV_Outcome, 
+         #odara_testing$race.predictions), 
+    # col = "blue", 
+     #main = "Accuracy Curve of Race on recidivism of Domestic Violence",
+     #print.auc = TRUE)
 
 ### White AUC
-plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"], 
-         odara_testing$race.predictions[odara_testing$RACE == "W: White"]), 
-     col = "blue", main = "ROC Curve", print.auc = TRUE)
+#plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "W: White"], 
+        # odara_testing$race.predictions[odara_testing$RACE == "W: White"]), 
+    # col = "blue", main = "ROC Curve", print.auc = TRUE)
 
 ### Hispanic AUC
-plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"], 
-         odara_testing$race.predictions[odara_testing$RACE == "H:  Hispanic"]), 
-     col = "blue", main = "ROC Curve", print.auc = TRUE)
+#plot(roc(odara_testing$dV_Outcome[odara_testing$RACE == "H:  Hispanic"], 
+        # odara_testing$race.predictions[odara_testing$RACE == "H:  Hispanic"]), 
+     #col = "blue", main = "ROC Curve", print.auc = TRUE)
 
 ## Gender
 
 
-plot(roc(odara_testing$dV_Outcome, 
-         odara_testing$gender.predictions), 
-     col = "blue", main = "ROC Curve", print.auc = TRUE)
+#plot(roc(odara_testing$dV_Outcome, 
+         #odara_testing$gender.predictions), 
+     #col = "blue", main = "ROC Curve", print.auc = TRUE)
 
 ### Men AUC
-plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "M"], 
-         odara_testing$gender.predictions[odara_testing$GENDER == "M"]), 
-     col = "blue", main = "ROC Curve", print.auc = TRUE)
+#plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "M"], 
+         #odara_testing$gender.predictions[odara_testing$GENDER == "M"]), 
+    # col = "blue", main = "ROC Curve", print.auc = TRUE)
 
 ### Women AUC
-plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "F"], 
-         odara_testing$gender.predictions[odara_testing$GENDER == "F"]), 
-     col = "blue", main = "ROC Curve", print.auc = TRUE)
+#plot(roc(odara_testing$dV_Outcome[odara_testing$GENDER == "F"], 
+         #odara_testing$gender.predictions[odara_testing$GENDER == "F"]), 
+     #col = "blue", main = "ROC Curve", print.auc = TRUE)
